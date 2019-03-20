@@ -1,0 +1,192 @@
+---
+- name: Update and upgrade apt packages
+  apt:
+    upgrade: yes
+    update_cache: yes
+    cache_valid_time: 86400 #One day
+
+- name: Install {{ java_name }}
+  apt:
+    name: "{{ java_name }}"
+    state: present
+
+- name: create "{{ tomcat_dir }}" directory
+  file:
+    path: "{{ tomcat_dir }}"
+    state: directory
+    mode: 0755
+
+- name: Download tomcat
+  get_url: url="http://apache.cs.utah.edu/tomcat/tomcat-8/v{{ tomcat_version }}/bin/apache-tomcat-{{ tomcat_version }}.tar.gz"
+         dest="/tmp/apache-tomcat-{{ tomcat_version }}.tar.gz"
+
+- name: Extract archive
+  unarchive:
+    src: "/tmp/apache-tomcat-{{ tomcat_version }}.tar.gz"
+    dest: "{{ tomcat_dir }}"
+    #needed so that unarchive does not run each time
+    creates: "{{ tomcat_dir }}/bin"
+    remote_src: yes
+    extra_opts: [--strip-components=1]
+
+- name: Add {{ tomcat_group }} group
+  group:
+    name: "{{ tomcat_group }}"
+
+- name: Add tomcat user
+  user:
+    name: tomcat
+    group: "{{ tomcat_group }}"
+    home: /user/share/tomcat
+    createhome: no
+
+#required to be able to deploy remotely via scp
+- name: Add user 'ubuntu' to group {{ tomcat_group }}
+  user:
+    name: 'ubuntu'
+    groups: "{{ tomcat_group }}"
+    append: yes
+
+- name: Change ownership
+  file:
+    path: "{{ tomcat_dir }}"
+    owner: tomcat
+    group: "{{ tomcat_group }}"
+    mode: "u+rwx,g+rx,o=rx"
+    recurse: yes
+    state: directory
+
+#DEPLOYING CONFIGURATION FILES TO TOMCAT
+- name: Copy Tomcat service from local to remote
+  copy:
+     src: tomcat.service
+     dest: /etc/systemd/system/
+     mode: 0755
+  notify: Restart Tomcat
+
+- name: Copy tomcat-users.xml
+  copy:
+     src: tomcat-users.xml
+     dest: "{{ tomcat_dir }}/conf/"
+     mode: 0755
+  notify: Restart Tomcat
+
+- name: Copy host manager context.xml
+  copy:
+     src: host-manager-context.xml
+     dest: "{{ tomcat_dir }}/webapps/host-manager/META-INF/context.xml"
+     mode: 0755
+  notify: Restart Tomcat
+
+- name: Copy manager context.xml
+  copy:
+     src: manager-context.xml
+     dest: "{{ tomcat_dir }}/webapps/manager/META-INF/context.xml"
+     mode: 0755
+  notify: Restart Tomcat
+
+- name: Create context.xml configuration file with Mysql resource
+  template:
+    src: conf-context.xml.j2
+    dest: "{{ tomcat_dir }}/conf/context.xml"
+    mode: 0755
+  notify: Restart Tomcat
+
+- name: Copy server.xml
+  template:
+     src: server.xml.j2
+     dest: "{{ tomcat_dir }}/conf"
+     owner: tomcat
+     group: "{{ tomcat_group }}"
+     mode: 0755
+  notify: Restart Tomcat
+
+#DEPLOYING WARS TO TOMCAT
+#Using .tmp at first to copy both wars together, so that unpacking only begins once both of them are copied
+
+#FROM S3 BUCKET
+# - name: Download admin.war from S3
+#   get_url:
+#     url: "{{ s3_admin_war_url }}"
+#     dest: "{{ tomcat_dir }}/webapps/{{ admin_app }}.war.tmp"
+#     force: yes
+#     mode: 0755
+
+
+- name: Download ROOT.war from S3
+  get_url:
+    url: "{{ s3_root_war_url }}"
+    dest: "{{ tomcat_dir }}/webapps/{{ root_app }}.war.tmp"
+    force: yes
+    mode: 0755
+
+#FROM LOCAL ARTIFACTS
+# - name: Copy BLC {{ admin_app }} war into war.tmp
+#   copy:
+#      src: "/home/roman/EPAM_labs/maven/CommunityDemo/admin/target/{{ admin_app }}.war"
+#      dest: "{{ tomcat_dir }}/webapps/{{ admin_app }}.war.tmp"
+#      owner: tomcat
+#      group: "{{ tomcat_group }}"
+#      mode: 0755
+#
+# - name: Copy BLC site war into war.tmp
+#   copy:
+#      src: "/home/roman/EPAM_labs/maven/CommunityDemo/site/target/{{ root_app }}.war"
+#      dest: "{{ tomcat_dir }}/webapps/{{ root_app }}.war.tmp"
+#      owner: tomcat
+#      group: "{{ tomcat_group }}"
+#      mode: 0755
+
+#Tomcat does not override default ROOT folder when extracting ROOT.war into webapps for some reason
+- name: Remove the current ROOT folder
+  file:
+    path: "{{ tomcat_dir }}/webapps/ROOT/"
+    state: absent
+
+#Trying this so that Tomcat starts unpacking both wars only after downloads are finished.
+#Otherwise EC2 performance goes down a lot
+
+- name: Copy BLC site app from war.tmp to war
+  copy:
+     src: "{{ tomcat_dir }}/webapps/{{ root_app }}.war.tmp"
+     dest: "{{ tomcat_dir }}/webapps/{{ root_app }}.war"
+     remote_src: yes
+     owner: tomcat
+     group: "{{ tomcat_group }}"
+     mode: 0755
+  notify: Restart Tomcat
+
+# - name: Copy BLC admin app from war.tmp to war
+#   copy:
+#      src: "{{ tomcat_dir }}/webapps/{{ admin_app }}.war.tmp"
+#      dest: "{{ tomcat_dir }}/webapps/{{ admin_app }}.war"
+#      remote_src: yes
+#      owner: tomcat
+#      group: "{{ tomcat_group }}"
+#      mode: 0755
+#   notify: Restart Tomcat
+
+#Restart Tomcat after copying wars
+- meta: flush_handlers
+
+
+- name: Start and enable Tomcat service
+  systemd:
+    name: tomcat
+    state: started
+    enabled: true
+    daemon_reload: true
+
+
+- name: "Wait for {{ site_url }} to come up"
+  uri:
+    url: "{{ site_url }}"
+    method: GET
+    status: 200
+    validate_certs: no
+  register: _result
+  until: _result.status == 200
+  retries: 20 # retry X times
+  delay: 30 # pause for X sec b/w each call
+
+- debug: var=_result

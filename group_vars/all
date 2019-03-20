@@ -1,0 +1,4 @@
+root_db_password: root
+dbpassword: broadleaf
+dbname: broadleaf
+dbuser: broadleaf

@@ -1,0 +1,13 @@
+---
+# vars file for tomcat
+ansible_python_interpreter: /usr/bin/python3
+java_name: openjdk-8-jdk
+group_name: tomcat
+tomcat_dir: /opt/tomcat
+tomcat_version: 8.5.38
+tomcat_group: tomcat
+admin_app: admin
+root_app: ROOT
+site_url: http://localhost:8080/
+s3_admin_war_url: https://s3-us-west-2.amazonaws.com/rorlovskyi-broadleaf-wars/broadleaf/admin.war
+s3_root_war_url: https://s3-us-west-2.amazonaws.com/rorlovskyi-broadleaf-wars/broadleaf/ROOT.war

@@ -1,0 +1,6 @@
+---
+# Main configuration file
+
+- import_playbook: mysql.yml
+- import_playbook: nginx.yml
+- import_playbook: tomcat.yml

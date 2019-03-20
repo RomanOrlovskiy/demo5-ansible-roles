@@ -1,0 +1,9 @@
+---
+  - hosts: tag_Name_Ubu_Tomcat_Server_2
+    become: yes
+    become_method: sudo
+    remote_user: ubuntu
+
+    roles:
+      - add_swap_space
+      - tomcat

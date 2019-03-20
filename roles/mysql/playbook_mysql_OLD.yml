@@ -1,0 +1,48 @@
+---
+- hosts: tag_Name_Centos_Mysql_Server
+
+  become: yes
+  become_method: sudo
+  remote_user: ec2-user
+
+  tasks:
+  - name: Download MySQL Community Repo
+    get_url:
+      url: http://repo.mysql.com/mysql-community-release-el6-5.noarch.rpm
+      dest: /tmp
+
+  - name: Install Mysql Packages
+    yum: name={{ item }} state=present
+    loop:
+    - /tmp/mysql-community-release-el6-5.noarch.rpm
+    - mysql-server
+    - MySQL-python
+
+  - name: Create Mysql configuration file
+    template: src=my.cnf.j2 dest=/etc/my.cnf
+    notify:
+    - restart mysql
+
+  - name: Start MySQL Server and enable it
+    service: name=mysqld state=started enabled=yes
+
+  - name: Remove All Anonymous User Accounts
+    mysql_user: name='' host_all=yes state=absent
+
+  - name: Change root password
+    mysql_user: name=root host={{item}} password={{root_db_password}}
+    loop:
+    - "{{ansible_hostname}}"
+    - 127.0.0.1
+    - ::1
+    - localhost
+
+  - name: Copy root user and pass from root.my.cnf
+    template: src=root.cnf.j2 dest=/root/.my.cnf owner=root mode=0600
+
+  - name: Create Application Database
+    mysql_db: name={{ dbname }} state=present
+
+  - name: Create Application DB User
+    mysql_user: name={{ dbuser }} password={{ dbpassword }} priv=*.*:ALL host={{ item }} state=present
+    loop: "{{ groups['tag_Name_Ubu_Tomcat_Server_2'] }}"
